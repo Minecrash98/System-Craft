@@ -1,0 +1,848 @@
+{
+"id": "refund-decision-guarded-workflow",
+"title": "Refund Decision Guarded Workflow",
+"description": "A privacy-aware and policy-grounded workflow for deciding refund requests while reducing abuse and requiring review for risky cases.",
+"version": "1.0.0",
+"user_idea": "A system for users who want product refunds, where the user provides the refund request, product, and reason, and the system outputs whether the refund should be approved while preventing user abuse.",
+"assumptions": [
+"The system decides whether to approve a refund but does not automatically issue money unless a separate authorized refund execution system is added.",
+"Refund decisions are based on store refund policy, order status, product category, delivery status, payment status, and prior refund behavior.",
+"Potential abuse includes false claims, repeated refund attempts, policy gaming, and inconsistent refund reasons."
+],
+"task_profile": {
+"task_type": "refund_decisioning",
+"risk_level": "high",
+"knowledge_intensity": "high",
+"requires_tools": true,
+"requires_memory": true,
+"requires_human_review": true,
+"requires_citations": true,
+"privacy_sensitivity": "high"
+},
+"naive_baseline": {
+"summary": "The unsafe baseline sends the user's refund request directly to one LLM, which returns approve or deny without checking policy, order facts, abuse history, or human review needs.",
+"failure_modes": [
+"The model may approve fraudulent or repeated refund requests because it only sees the user's self-reported reason.",
+"The model may deny legitimate refunds because it does not retrieve the actual policy, order status, or delivery evidence.",
+"The model may expose private order, payment, or customer history details in the final explanation."
+]
+},
+"nodes": [
+{
+"id": "refund_request_input",
+"type": "input",
+"name": "Refund Request Input",
+"description": "Collects the user's refund request, product information, order reference, and stated refund reason.",
+"inputs": [],
+"outputs": [
+{
+"name": "raw_refund_request",
+"description": "The complete user-submitted refund request before validation or privacy filtering.",
+"sensitive": true,
+"format": "structured_text"
+}
+],
+"config": {
+"required_fields": "order_reference, product_identifier, refund_reason, requested_resolution",
+"optional_fields": "photos, delivery_notes, customer_comments",
+"max_input_length": "4000_characters"
+},
+"risks": [
+{
+"risk_type": "incomplete_or_false_input",
+"severity": "warning",
+"description": "The user may omit important facts or provide a misleading refund reason.",
+"mitigation": "Require structured fields and later compare the claim against order, policy, delivery, and history records."
+}
+],
+"cost_estimate": {
+"relative": "none",
+"notes": "This node only receives user input.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "none",
+"notes": "Input capture is immediate.",
+"estimated_seconds": 0
+},
+"alternatives": [
+{
+"name": "Free Text Form",
+"tradeoff": "Easier for users but harder to validate reliably.",
+"when_to_use": "Use for early prototypes with low volume."
+}
+],
+"explanation_for_beginner": "This is where the customer first tells the system what they want refunded and why.",
+"position": {
+"x": 0,
+"y": 0
+}
+},
+{
+"id": "pii_and_payment_privacy_filter",
+"type": "privacy_filter",
+"name": "PII And Payment Privacy Filter",
+"description": "Removes or masks unnecessary personal, payment, and contact details before the request is processed.",
+"inputs": [
+{
+"name": "raw_refund_request",
+"description": "The original refund request containing possible personal and payment-related information.",
+"sensitive": true,
+"format": "structured_text"
+}
+],
+"outputs": [
+{
+"name": "sanitized_refund_request",
+"description": "A minimized version of the request with only the fields required for decisioning.",
+"sensitive": true,
+"format": "structured_text"
+},
+{
+"name": "privacy_audit_summary",
+"description": "A short record of what categories of sensitive data were detected and masked.",
+"sensitive": true,
+"format": "privacy_report"
+}
+],
+"config": {
+"mask_fields": "email, phone, full_address, payment_card, bank_account, government_id",
+"retain_fields": "order_reference, product_identifier, refund_reason, requested_resolution",
+"redaction_policy": "minimize_sensitive_data_before_model_use"
+},
+"risks": [
+{
+"risk_type": "privacy_leakage",
+"severity": "critical",
+"description": "Private customer, address, or payment details may be passed to later components unnecessarily.",
+"mitigation": "Mask sensitive fields before retrieval and generation, and only allow authorized tools to access raw identifiers."
+}
+],
+"cost_estimate": {
+"relative": "low",
+"notes": "Lightweight pattern matching and field filtering.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "low",
+"notes": "Privacy filtering should be fast for short refund forms.",
+"estimated_seconds": 1
+},
+"alternatives": [
+{
+"name": "Manual Redaction",
+"tradeoff": "More accurate for edge cases but slower and expensive.",
+"when_to_use": "Use for highly regulated products or enterprise support queues."
+}
+],
+"explanation_for_beginner": "This step hides private information so the rest of the system only sees what it truly needs.",
+"position": {
+"x": 220,
+"y": 0
+}
+},
+{
+"id": "refund_intent_and_risk_classifier",
+"type": "classifier",
+"name": "Refund Intent And Risk Classifier",
+"description": "Classifies the refund request type, product category, urgency, and initial abuse risk.",
+"inputs": [
+{
+"name": "sanitized_refund_request",
+"description": "The privacy-filtered refund request.",
+"sensitive": true,
+"format": "structured_text"
+}
+],
+"outputs": [
+{
+"name": "refund_case_classification",
+"description": "Structured labels for refund reason, product type, policy category, and abuse risk level.",
+"sensitive": true,
+"format": "classification"
+}
+],
+"config": {
+"classification_labels": "damaged_item, wrong_item, not_received, buyer_remorse, defective_product, duplicate_order, suspicious_claim",
+"risk_bands": "low, medium, high",
+"abuse_signals": "repeat_refund_language, inconsistent_claim, missing_evidence, high_value_item"
+},
+"risks": [
+{
+"risk_type": "misclassification",
+"severity": "error",
+"description": "A legitimate request may be incorrectly labeled suspicious or a suspicious request may be labeled normal.",
+"mitigation": "Use classifier confidence scores and route low-confidence or high-value cases to stricter review."
+}
+],
+"cost_estimate": {
+"relative": "low",
+"notes": "Can be implemented with rules, a small model, or a lightweight classification prompt.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "low",
+"notes": "Classification requires only the current request.",
+"estimated_seconds": 1
+},
+"alternatives": [
+{
+"name": "Rules Only Classifier",
+"tradeoff": "More predictable but less flexible for unusual refund reasons.",
+"when_to_use": "Use when policy categories are simple and stable."
+}
+],
+"explanation_for_beginner": "This step sorts the refund request into a clear category so the system knows which rules to check.",
+"position": {
+"x": 440,
+"y": 0
+}
+},
+{
+"id": "refund_policy_knowledge_base",
+"type": "knowledge_base",
+"name": "Refund Policy Knowledge Base",
+"description": "Stores approved refund policies, exception rules, product restrictions, and required evidence standards.",
+"inputs": [
+{
+"name": "policy_documents",
+"description": "The official refund policy, product-specific rules, warranty terms, and exception guidance.",
+"sensitive": false,
+"format": "policy_context"
+}
+],
+"outputs": [
+{
+"name": "indexed_refund_policy",
+"description": "A searchable source of truth for refund eligibility and decision explanations.",
+"sensitive": false,
+"format": "vector_index"
+}
+],
+"config": {
+"source_control": "approved_policy_documents_only",
+"update_frequency": "on_policy_change",
+"citation_required": true
+},
+"risks": [
+{
+"risk_type": "stale_policy",
+"severity": "error",
+"description": "Outdated refund rules may lead to incorrect approvals or denials.",
+"mitigation": "Version policy documents and require retrieval to return policy version and effective date."
+}
+],
+"cost_estimate": {
+"relative": "medium",
+"notes": "Indexing has moderate setup cost but low cost per refund decision.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "low",
+"notes": "Policy lookup is fast after indexing.",
+"estimated_seconds": 1
+},
+"alternatives": [
+{
+"name": "Static Rule Table",
+"tradeoff": "Cheaper and more deterministic but harder to maintain for complex policies.",
+"when_to_use": "Use when the refund policy is short and rarely changes."
+}
+],
+"explanation_for_beginner": "This is the official rulebook the system checks before making a refund decision.",
+"position": {
+"x": 440,
+"y": 220
+}
+},
+{
+"id": "order_and_evidence_retrieval",
+"type": "retrieval",
+"name": "Order And Evidence Retrieval",
+"description": "Retrieves policy passages, order facts, delivery status, product details, and submitted evidence relevant to the refund claim.",
+"inputs": [
+{
+"name": "sanitized_refund_request",
+"description": "The minimized refund request used to search for order and product context.",
+"sensitive": true,
+"format": "structured_text"
+},
+{
+"name": "refund_case_classification",
+"description": "The request category and risk band used to choose the right evidence sources.",
+"sensitive": true,
+"format": "classification"
+},
+{
+"name": "indexed_refund_policy",
+"description": "The searchable refund policy source of truth.",
+"sensitive": false,
+"format": "vector_index"
+}
+],
+"outputs": [
+{
+"name": "refund_evidence_bundle",
+"description": "A structured set of retrieved facts, policy citations, order status, and evidence availability.",
+"sensitive": true,
+"format": "evidence_bundle"
+}
+],
+"config": {
+"retrieval_sources": "refund_policy, order_database, delivery_tracking, product_catalog, evidence_uploads",
+"minimum_policy_citations": "2",
+"missing_evidence_behavior": "mark_as_incomplete_not_denied"
+},
+"risks": [
+{
+"risk_type": "wrong_record_retrieval",
+"severity": "critical",
+"description": "The system may retrieve the wrong order or product record, causing an unfair decision.",
+"mitigation": "Require exact order reference matching and verify product identifier consistency before using retrieved facts."
+}
+],
+"cost_estimate": {
+"relative": "medium",
+"notes": "Requires database lookups, policy retrieval, and evidence checks.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "medium",
+"notes": "External systems may add latency.",
+"estimated_seconds": 3
+},
+"alternatives": [
+{
+"name": "Manual Support Lookup",
+"tradeoff": "More controllable but slower and not scalable.",
+"when_to_use": "Use for high-value orders or disputed cases."
+}
+],
+"explanation_for_beginner": "This step gathers the facts, like whether the item was delivered and what the refund policy says.",
+"position": {
+"x": 660,
+"y": 0
+}
+},
+{
+"id": "refund_history_memory",
+"type": "memory",
+"name": "Refund History Memory",
+"description": "Provides privacy-bounded access to prior refund behavior and abuse indicators without exposing unnecessary customer details.",
+"inputs": [
+{
+"name": "sanitized_refund_request",
+"description": "The minimized request containing the order reference or customer-safe lookup key.",
+"sensitive": true,
+"format": "structured_text"
+}
+],
+"outputs": [
+{
+"name": "abuse_history_summary",
+"description": "A summarized view of relevant prior refund activity and risk signals.",
+"sensitive": true,
+"format": "risk_summary"
+}
+],
+"config": {
+"retention_policy": "store_only_policy_relevant_refund_history",
+"allowed_fields": "refund_count, recent_claim_patterns, unresolved_disputes, confirmed_abuse_flags",
+"forbidden_fields": "full_payment_details, unrelated_support_messages, private_notes_not_relevant_to_refunds"
+},
+"risks": [
+{
+"risk_type": "unfair_customer_profiling",
+"severity": "critical",
+"description": "Historical behavior could unfairly bias decisions against a customer with legitimate current claims.",
+"mitigation": "Use history as a risk signal only, never as the sole reason for denial, and require human review for high-risk denials."
+}
+],
+"cost_estimate": {
+"relative": "low",
+"notes": "Requires a small lookup and summarization of prior refund records.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "low",
+"notes": "Memory lookup should be fast if refund history is indexed.",
+"estimated_seconds": 1
+},
+"alternatives": [
+{
+"name": "No History Check",
+"tradeoff": "Better privacy but much weaker abuse prevention.",
+"when_to_use": "Use only for low-value refunds or jurisdictions with strict limits on profiling."
+}
+],
+"explanation_for_beginner": "This step checks whether there are repeated refund patterns, but it must not automatically punish the customer.",
+"position": {
+"x": 660,
+"y": 220
+}
+},
+{
+"id": "tool_permission_gate",
+"type": "tool",
+"name": "Tool Permission Gate",
+"description": "Controls which order, delivery, policy, and refund-system tools may be accessed for this case.",
+"inputs": [
+{
+"name": "refund_case_classification",
+"description": "The category and risk level used to decide allowed tool access.",
+"sensitive": true,
+"format": "classification"
+},
+{
+"name": "privacy_audit_summary",
+"description": "The privacy filtering record used to enforce data minimization.",
+"sensitive": true,
+"format": "privacy_report"
+}
+],
+"outputs": [
+{
+"name": "tool_access_decision",
+"description": "A decision describing which tools may be used and which fields may be accessed.",
+"sensitive": true,
+"format": "action_decision"
+}
+],
+"config": {
+"default_access": "deny",
+"allowed_tools": "order_lookup, delivery_lookup, product_catalog_lookup, policy_retrieval",
+"blocked_tools": "refund_execution, payment_modification, account_suspension"
+},
+"risks": [
+{
+"risk_type": "unauthorized_tool_access",
+"severity": "critical",
+"description": "The workflow may access or change sensitive systems beyond what is needed for a decision.",
+"mitigation": "Use deny-by-default permissions and separate decision support from actual refund execution."
+}
+],
+"cost_estimate": {
+"relative": "low",
+"notes": "Permission checks are simple but important.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "low",
+"notes": "Tool gating should run quickly before external calls.",
+"estimated_seconds": 1
+},
+"alternatives": [
+{
+"name": "Human Tool Approval",
+"tradeoff": "Safer for sensitive cases but slower for normal refunds.",
+"when_to_use": "Use when the workflow can trigger payment, refund, or account changes."
+}
+],
+"explanation_for_beginner": "This is a safety lock that prevents the AI from using tools it should not use.",
+"position": {
+"x": 880,
+"y": 120
+}
+},
+{
+"id": "refund_decision_llm",
+"type": "llm",
+"name": "Refund Decision LLM",
+"description": "Generates a policy-grounded refund recommendation with reasoning, citations, and abuse-risk considerations.",
+"inputs": [
+{
+"name": "refund_evidence_bundle",
+"description": "Retrieved policy, order, delivery, product, and evidence facts.",
+"sensitive": true,
+"format": "evidence_bundle"
+},
+{
+"name": "abuse_history_summary",
+"description": "Relevant prior refund behavior and abuse risk signals.",
+"sensitive": true,
+"format": "risk_summary"
+},
+{
+"name": "tool_access_decision",
+"description": "The allowed tool access decision and data boundary for this case.",
+"sensitive": true,
+"format": "action_decision"
+}
+],
+"outputs": [
+{
+"name": "draft_refund_decision",
+"description": "A draft approve, deny, or escalate recommendation with evidence-based reasoning.",
+"sensitive": true,
+"format": "draft_decision"
+}
+],
+"config": {
+"decision_options": "approve, deny, request_more_information, escalate_to_human",
+"citation_policy": "cite_policy_and_order_facts_for_each_material_claim",
+"abuse_policy": "do_not_deny_based_only_on_suspicion_or_history"
+},
+"risks": [
+{
+"risk_type": "overconfident_decision",
+"severity": "critical",
+"description": "The model may present an uncertain or poorly grounded decision as final.",
+"mitigation": "Require confidence, citations, missing-evidence flags, and evaluator review before final output."
+}
+],
+"cost_estimate": {
+"relative": "medium",
+"notes": "Requires an LLM call over structured evidence and policies.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "medium",
+"notes": "Generation latency depends on evidence length and explanation detail.",
+"estimated_seconds": 4
+},
+"alternatives": [
+{
+"name": "Deterministic Decision Engine",
+"tradeoff": "More predictable and auditable but less flexible for ambiguous cases.",
+"when_to_use": "Use when refund rules are formal and exceptions are rare."
+}
+],
+"explanation_for_beginner": "This step writes the first decision, but it must use facts and rules instead of guessing.",
+"position": {
+"x": 1100,
+"y": 0
+}
+},
+{
+"id": "decision_quality_evaluator",
+"type": "evaluator",
+"name": "Decision Quality Evaluator",
+"description": "Checks the draft decision for policy support, citation coverage, privacy leakage, fairness, and abuse-handling errors.",
+"inputs": [
+{
+"name": "draft_refund_decision",
+"description": "The LLM-generated refund recommendation.",
+"sensitive": true,
+"format": "draft_decision"
+},
+{
+"name": "refund_evidence_bundle",
+"description": "The source evidence used to verify the recommendation.",
+"sensitive": true,
+"format": "evidence_bundle"
+}
+],
+"outputs": [
+{
+"name": "evaluated_refund_decision",
+"description": "The checked decision with pass, fail, or escalate status.",
+"sensitive": true,
+"format": "evaluated_decision"
+}
+],
+"config": {
+"checks": "policy_alignment, citation_presence, evidence_consistency, privacy_leakage, unfair_denial, abuse_reasoning",
+"fail_behavior": "escalate_to_human",
+"minimum_confidence_for_auto_output": "0.85"
+},
+"risks": [
+{
+"risk_type": "evaluator_false_pass",
+"severity": "critical",
+"description": "The evaluator may fail to catch an unsupported approval or unfair denial.",
+"mitigation": "Use strict pass criteria and route high-value, high-risk, or low-confidence cases to human review."
+}
+],
+"cost_estimate": {
+"relative": "medium",
+"notes": "May use rules plus an additional model call for semantic verification.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "medium",
+"notes": "Evaluation requires comparing the decision against evidence and policy.",
+"estimated_seconds": 3
+},
+"alternatives": [
+{
+"name": "Policy Checklist Only",
+"tradeoff": "Faster and cheaper but weaker at catching nuanced reasoning errors.",
+"when_to_use": "Use for low-risk, low-value refunds."
+}
+],
+"explanation_for_beginner": "This step double-checks whether the AI's decision is fair, private, and backed by evidence.",
+"position": {
+"x": 1320,
+"y": 0
+}
+},
+{
+"id": "human_refund_review",
+"type": "human_review",
+"name": "Human Refund Review",
+"description": "Routes high-risk, low-confidence, high-value, or disputed cases to a human reviewer before a final decision is shown.",
+"inputs": [
+{
+"name": "evaluated_refund_decision",
+"description": "The evaluated recommendation and escalation flags.",
+"sensitive": true,
+"format": "evaluated_decision"
+},
+{
+"name": "refund_evidence_bundle",
+"description": "The key evidence and policy citations needed by the reviewer.",
+"sensitive": true,
+"format": "evidence_bundle"
+}
+],
+"outputs": [
+{
+"name": "reviewed_refund_decision",
+"description": "The human-approved, corrected, or overridden refund decision.",
+"sensitive": true,
+"format": "reviewed_decision"
+}
+],
+"config": {
+"review_required_when": "high_value_order, high_abuse_risk, denial_with_weak_evidence, missing_required_evidence, evaluator_fail",
+"reviewer_view": "show_minimized_customer_data_plus_policy_citations",
+"override_reason_required": true
+},
+"risks": [
+{
+"risk_type": "reviewer_bias_or_inconsistency",
+"severity": "error",
+"description": "Human reviewers may apply policy inconsistently across similar cases.",
+"mitigation": "Provide a structured review checklist and require written reasons for overrides."
+}
+],
+"cost_estimate": {
+"relative": "high",
+"notes": "Human review adds operational cost but is necessary for sensitive or risky cases.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "high",
+"notes": "Human review may take significantly longer than automated evaluation.",
+"estimated_seconds": 300
+},
+"alternatives": [
+{
+"name": "Supervisor Review Only For Appeals",
+"tradeoff": "Faster first response but more risk of unfair automated decisions.",
+"when_to_use": "Use when legal and business risk is lower."
+}
+],
+"explanation_for_beginner": "This step asks a person to check difficult cases so the system does not make unfair or risky decisions alone.",
+"position": {
+"x": 1540,
+"y": 120
+}
+},
+{
+"id": "final_refund_decision_output",
+"type": "output",
+"name": "Final Refund Decision Output",
+"description": "Returns a clear approve, deny, request-more-information, or escalate decision with safe reasoning and policy citations.",
+"inputs": [
+{
+"name": "final_refund_decision",
+"description": "The final decision after automated evaluation or human review.",
+"sensitive": true,
+"format": "final_decision"
+}
+],
+"outputs": [],
+"config": {
+"output_fields": "decision, reason_summary, policy_citations, required_next_steps, appeal_or_support_path",
+"forbidden_output": "internal_fraud_score, private_history_details, raw_payment_information",
+"tone": "clear_neutral_and_non_accusatory"
+},
+"risks": [
+{
+"risk_type": "unsafe_or_accusatory_output",
+"severity": "error",
+"description": "The output may reveal internal abuse signals or accuse the user without sufficient evidence.",
+"mitigation": "Only provide customer-safe reasons, cite policy, and describe missing information or next steps neutrally."
+}
+],
+"cost_estimate": {
+"relative": "low",
+"notes": "Formatting the final result is inexpensive.",
+"units_per_run": 1
+},
+"latency_estimate": {
+"relative": "low",
+"notes": "Final formatting should be fast after the decision is ready.",
+"estimated_seconds": 1
+},
+"alternatives": [
+{
+"name": "Internal And Customer Split Output",
+"tradeoff": "More complex but safer because support agents see detailed evidence while customers see only safe explanations.",
+"when_to_use": "Use when the same system serves both customers and internal support staff."
+}
+],
+"explanation_for_beginner": "This is the final answer the customer or support team sees, written clearly and without leaking private details.",
+"position": {
+"x": 1760,
+"y": 0
+}
+}
+],
+"edges": [
+{
+"id": "edge_refund_request_input_pii_and_payment_privacy_filter",
+"source": "refund_request_input",
+"target": "pii_and_payment_privacy_filter",
+"kind": "data_flow",
+"label": "Raw refund request",
+"condition": "Always",
+"data_contract": "structured_text containing order_reference, product_identifier, refund_reason, and requested_resolution"
+},
+{
+"id": "edge_pii_and_payment_privacy_filter_refund_intent_and_risk_classifier",
+"source": "pii_and_payment_privacy_filter",
+"target": "refund_intent_and_risk_classifier",
+"kind": "data_flow",
+"label": "Sanitized request",
+"condition": "Always",
+"data_contract": "structured_text with unnecessary PII and payment fields masked"
+},
+{
+"id": "edge_pii_and_payment_privacy_filter_tool_permission_gate",
+"source": "pii_and_payment_privacy_filter",
+"target": "tool_permission_gate",
+"kind": "control_flow",
+"label": "Privacy audit boundary",
+"condition": "Always",
+"data_contract": "privacy_report describing detected and masked sensitive fields"
+},
+{
+"id": "edge_refund_intent_and_risk_classifier_order_and_evidence_retrieval",
+"source": "refund_intent_and_risk_classifier",
+"target": "order_and_evidence_retrieval",
+"kind": "control_flow",
+"label": "Case category and risk band",
+"condition": "Always",
+"data_contract": "classification with refund_type, product_category, abuse_risk, and confidence"
+},
+{
+"id": "edge_refund_policy_knowledge_base_order_and_evidence_retrieval",
+"source": "refund_policy_knowledge_base",
+"target": "order_and_evidence_retrieval",
+"kind": "data_flow",
+"label": "Refund policy source of truth",
+"condition": "Always",
+"data_contract": "vector_index with policy passages, version, effective_date, and citation metadata"
+},
+{
+"id": "edge_pii_and_payment_privacy_filter_order_and_evidence_retrieval",
+"source": "pii_and_payment_privacy_filter",
+"target": "order_and_evidence_retrieval",
+"kind": "data_flow",
+"label": "Safe lookup request",
+"condition": "Always",
+"data_contract": "structured_text using minimized identifiers only"
+},
+{
+"id": "edge_pii_and_payment_privacy_filter_refund_history_memory",
+"source": "pii_and_payment_privacy_filter",
+"target": "refund_history_memory",
+"kind": "data_flow",
+"label": "Privacy-bounded history lookup key",
+"condition": "Always",
+"data_contract": "structured_text with customer-safe lookup reference"
+},
+{
+"id": "edge_refund_intent_and_risk_classifier_tool_permission_gate",
+"source": "refund_intent_and_risk_classifier",
+"target": "tool_permission_gate",
+"kind": "control_flow",
+"label": "Allowed tool scope",
+"condition": "Always",
+"data_contract": "classification used to select permitted read-only tools"
+},
+{
+"id": "edge_tool_permission_gate_order_and_evidence_retrieval",
+"source": "tool_permission_gate",
+"target": "order_and_evidence_retrieval",
+"kind": "control_flow",
+"label": "Approved retrieval tools",
+"condition": "Tool access is approved",
+"data_contract": "action_decision listing allowed tools and accessible fields"
+},
+{
+"id": "edge_order_and_evidence_retrieval_refund_decision_llm",
+"source": "order_and_evidence_retrieval",
+"target": "refund_decision_llm",
+"kind": "data_flow",
+"label": "Evidence bundle",
+"condition": "Required evidence retrieval completes",
+"data_contract": "evidence_bundle with policy citations, order facts, delivery status, and missing evidence flags"
+},
+{
+"id": "edge_refund_history_memory_refund_decision_llm",
+"source": "refund_history_memory",
+"target": "refund_decision_llm",
+"kind": "data_flow",
+"label": "Abuse history summary",
+"condition": "History lookup is permitted",
+"data_contract": "risk_summary without raw private history details"
+},
+{
+"id": "edge_tool_permission_gate_refund_decision_llm",
+"source": "tool_permission_gate",
+"target": "refund_decision_llm",
+"kind": "control_flow",
+"label": "Decision boundary",
+"condition": "Always",
+"data_contract": "action_decision confirming no refund execution or payment modification is allowed"
+},
+{
+"id": "edge_refund_decision_llm_decision_quality_evaluator",
+"source": "refund_decision_llm",
+"target": "decision_quality_evaluator",
+"kind": "review_flow",
+"label": "Draft refund decision",
+"condition": "Always",
+"data_contract": "draft_decision containing decision, reasoning, confidence, citations, and missing evidence"
+},
+{
+"id": "edge_order_and_evidence_retrieval_decision_quality_evaluator",
+"source": "order_and_evidence_retrieval",
+"target": "decision_quality_evaluator",
+"kind": "review_flow",
+"label": "Verification evidence",
+"condition": "Always",
+"data_contract": "evidence_bundle used to verify claims and citations"
+},
+{
+"id": "edge_decision_quality_evaluator_human_refund_review",
+"source": "decision_quality_evaluator",
+"target": "human_refund_review",
+"kind": "review_flow",
+"label": "Escalated refund case",
+"condition": "Evaluator fails, confidence is low, order value is high, abuse risk is high, or denial evidence is weak",
+"data_contract": "evaluated_decision with escalation reason and reviewer checklist"
+},
+{
+"id": "edge_human_refund_review_final_refund_decision_output",
+"source": "human_refund_review",
+"target": "final_refund_decision_output",
+"kind": "review_flow",
+"label": "Reviewed decision",
+"condition": "Human review was required",
+"data_contract": "reviewed_decision with safe customer-facing reason and policy citations"
+},
+{
+"id": "edge_decision_quality_evaluator_final_refund_decision_output",
+"source": "decision_quality_evaluator",
+"target": "final_refund_decision_output",
+"kind": "data_flow",
+"label": "Approved automated decision",
+"condition": "Evaluator passes and no human review trigger is present",
+"data_contract": "evaluated_decision converted into final_decision"
+}
+]
+}

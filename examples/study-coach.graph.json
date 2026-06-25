@@ -1,0 +1,632 @@
+{
+  "id": "study-coach",
+  "title": "AI Study Coach For University Students",
+  "description": "A privacy-aware study coach architecture that grounds plans in course notes, tracks weak topics, and keeps the student in control.",
+  "version": "1.0.0",
+  "user_idea": "Build an AI study coach that helps me plan weekly revision, quiz myself from course notes, and track weak topics without exposing private notes.",
+  "assumptions": [
+    "Course notes are private study material.",
+    "The student wants quizzes and weekly planning.",
+    "Memory should store only learning progress, not full private notes."
+  ],
+  "task_profile": {
+    "task_type": "study_coach",
+    "risk_level": "medium",
+    "knowledge_intensity": "high",
+    "requires_tools": false,
+    "requires_memory": true,
+    "requires_human_review": true,
+    "requires_citations": false,
+    "privacy_sensitivity": "high"
+  },
+  "naive_baseline": {
+    "summary": "Student asks one LLM for a study plan, and the model responds from general knowledge without privacy filtering, course grounding, or approval.",
+    "failure_modes": [
+      "Plans can be generic and disconnected from actual course notes.",
+      "Private notes may be copied into prompts or memory without boundaries.",
+      "The student has no approval gate before a schedule is treated as final."
+    ]
+  },
+  "nodes": [
+    {
+      "id": "student_goal_input",
+      "type": "input",
+      "name": "Student Goal Input",
+      "description": "Collects exam dates, weekly availability, and study goals.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "study_goal",
+          "description": "Goal, schedule constraints, and target topics.",
+          "format": "text"
+        }
+      ],
+      "config": {
+        "required_fields": ["goal", "available_hours", "deadline"]
+      },
+      "risks": [
+        {
+          "risk_type": "missing_context",
+          "severity": "warning",
+          "description": "A vague goal can produce a weak plan.",
+          "mitigation": "Ask for deadline and available hours before planning."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "No model cost." },
+      "latency_estimate": { "relative": "none", "notes": "Immediate input." },
+      "alternatives": [
+        {
+          "name": "Template-based intake",
+          "tradeoff": "More structured but slower to fill out."
+        }
+      ],
+      "explanation_for_beginner": "The coach starts by learning what the student needs to accomplish.",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "privacy_filter",
+      "type": "privacy_filter",
+      "name": "Privacy Filter",
+      "description": "Removes unnecessary personal or sensitive note content before model calls.",
+      "inputs": [
+        {
+          "name": "course_notes",
+          "description": "Private course notes and study materials.",
+          "sensitive": true,
+          "format": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "minimized_notes",
+          "description": "Notes with only needed study content retained.",
+          "sensitive": true,
+          "format": "text"
+        }
+      ],
+      "config": {
+        "redact_personal_details": true,
+        "store_full_notes": false
+      },
+      "risks": [
+        {
+          "risk_type": "over_redaction",
+          "severity": "warning",
+          "description": "Removing too much context can weaken quiz quality.",
+          "mitigation": "Keep topic titles and learning objectives while removing personal details."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Can be local rules for MVP." },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Fast text processing.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Manual privacy review",
+          "tradeoff": "More control but more user effort."
+        }
+      ],
+      "explanation_for_beginner": "This step keeps the system from using more private material than it needs.",
+      "position": { "x": 220, "y": 0 }
+    },
+    {
+      "id": "course_notes_kb",
+      "type": "knowledge_base",
+      "name": "Course Notes Knowledge Base",
+      "description": "Stores minimized notes for retrieval during planning and quiz generation.",
+      "inputs": [
+        {
+          "name": "minimized_notes",
+          "description": "Filtered course notes.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "course_index",
+          "description": "Searchable course topics and snippets.",
+          "sensitive": true,
+          "format": "indexed_notes"
+        }
+      ],
+      "config": {
+        "retention_policy": "local draft only until reset",
+        "delete_supported": true
+      },
+      "risks": [
+        {
+          "risk_type": "private_notes_storage",
+          "severity": "error",
+          "description": "Course notes are sensitive and need a clear storage boundary.",
+          "mitigation": "Store minimized notes only and support reset or deletion."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Small course indexes are cheap." },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Lookup should be quick.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "No stored notes",
+          "tradeoff": "Best privacy but weaker personalization."
+        }
+      ],
+      "explanation_for_beginner": "The knowledge base is the private course library the coach can search.",
+      "position": { "x": 440, "y": 0 }
+    },
+    {
+      "id": "retrieval",
+      "type": "retrieval",
+      "name": "Retrieval",
+      "description": "Finds relevant topics, deadlines, and notes for the current study goal.",
+      "inputs": [
+        {
+          "name": "study_goal",
+          "description": "The student's goal and constraints."
+        },
+        {
+          "name": "course_index",
+          "description": "Searchable course notes.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "study_context",
+          "description": "Relevant notes and topic summaries.",
+          "sensitive": true,
+          "format": "context_bundle"
+        }
+      ],
+      "config": {
+        "top_k": 8,
+        "fallback_when_empty": "ask student for syllabus or topic list"
+      },
+      "risks": [
+        {
+          "risk_type": "irrelevant_context",
+          "severity": "warning",
+          "description": "Wrong notes can create a poor revision plan.",
+          "mitigation": "Show selected topics and allow the student to adjust."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Retrieval is low-cost." },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Expected quick lookup.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Topic checklist",
+          "tradeoff": "Less automation but clearer control."
+        }
+      ],
+      "explanation_for_beginner": "Retrieval picks the course material that matters for this week's plan.",
+      "position": { "x": 660, "y": 0 }
+    },
+    {
+      "id": "study_plan_prompt",
+      "type": "prompt",
+      "name": "Study Plan Prompt",
+      "description": "Instructs the model to make a practical, bounded revision plan.",
+      "inputs": [
+        {
+          "name": "study_goal",
+          "description": "Goal and time constraints."
+        },
+        {
+          "name": "study_context",
+          "description": "Relevant course snippets."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "planning_prompt",
+          "description": "Prompt for the study coach model.",
+          "format": "prompt"
+        }
+      ],
+      "config": {
+        "output_format": "weekly plan with topics, quiz blocks, and rest periods",
+        "uncertainty_behavior": "ask when deadlines or topics are missing"
+      },
+      "risks": [
+        {
+          "risk_type": "overloaded_plan",
+          "severity": "warning",
+          "description": "A plan can assign too much work.",
+          "mitigation": "Require available-hours constraints and evaluator review."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "Prompt assembly has no model cost." },
+      "latency_estimate": { "relative": "low", "notes": "Local prompt assembly." },
+      "alternatives": [
+        {
+          "name": "Rule-based schedule builder",
+          "tradeoff": "More predictable but less adaptive."
+        }
+      ],
+      "explanation_for_beginner": "The prompt turns the student's goal and notes into clear instructions for the model.",
+      "position": { "x": 880, "y": 0 }
+    },
+    {
+      "id": "study_coach_llm",
+      "type": "llm",
+      "name": "LLM Study Coach",
+      "description": "Drafts a weekly plan and explains why each block matters.",
+      "inputs": [
+        {
+          "name": "planning_prompt",
+          "description": "Instructions and course context."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "draft_plan",
+          "description": "Draft study plan.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "tone": "supportive",
+        "temperature": 0.4
+      },
+      "risks": [
+        {
+          "risk_type": "generic_advice",
+          "severity": "warning",
+          "description": "The model can fall back to generic study tips.",
+          "mitigation": "Ground the prompt in retrieved course context."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "One generation call per plan.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Generation takes a few seconds.",
+        "estimated_seconds": 6
+      },
+      "alternatives": [
+        {
+          "name": "Checklist generator",
+          "tradeoff": "Cheaper but less personalized."
+        }
+      ],
+      "explanation_for_beginner": "This is the part that writes the first version of the plan.",
+      "position": { "x": 1100, "y": 0 }
+    },
+    {
+      "id": "quiz_generator",
+      "type": "llm",
+      "name": "Quiz Generator",
+      "description": "Creates short quiz questions from retrieved course topics.",
+      "inputs": [
+        {
+          "name": "study_context",
+          "description": "Relevant course material."
+        },
+        {
+          "name": "draft_plan",
+          "description": "Draft weekly plan."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "quiz_blocks",
+          "description": "Quiz questions and answer keys.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "question_count_per_topic": 3,
+        "include_answer_key": true
+      },
+      "risks": [
+        {
+          "risk_type": "incorrect_quiz",
+          "severity": "warning",
+          "description": "Generated quizzes may test the wrong fact.",
+          "mitigation": "Keep questions tied to retrieved course notes."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "Separate generation call for quizzes.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Quiz generation adds wait time.",
+        "estimated_seconds": 5
+      },
+      "alternatives": [
+        {
+          "name": "Flashcard template",
+          "tradeoff": "Simpler but less varied."
+        }
+      ],
+      "explanation_for_beginner": "The quiz generator turns study material into practice questions.",
+      "position": { "x": 1100, "y": 200 }
+    },
+    {
+      "id": "progress_memory",
+      "type": "memory",
+      "name": "Progress Memory",
+      "description": "Stores weak topics, completed sessions, and student-approved progress state.",
+      "inputs": [
+        {
+          "name": "quiz_results",
+          "description": "Self-reported quiz results and weak topics.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "progress_state",
+          "description": "Small memory record for future study plans.",
+          "sensitive": true,
+          "format": "progress_summary"
+        }
+      ],
+      "config": {
+        "stores_full_notes": false,
+        "retention_policy": "student can reset progress at any time",
+        "requires_consent": true
+      },
+      "risks": [
+        {
+          "risk_type": "sensitive_memory",
+          "severity": "warning",
+          "description": "Learning progress can be sensitive personal data.",
+          "mitigation": "Store only weak-topic summaries with reset support."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Small local state." },
+      "latency_estimate": { "relative": "none", "notes": "Memory read/write is immediate." },
+      "alternatives": [
+        {
+          "name": "No memory mode",
+          "tradeoff": "More privacy but less personalization."
+        }
+      ],
+      "explanation_for_beginner": "Memory helps the coach remember progress without keeping the full notes.",
+      "position": { "x": 880, "y": 200 }
+    },
+    {
+      "id": "clarity_evaluator",
+      "type": "evaluator",
+      "name": "Overload And Clarity Evaluator",
+      "description": "Checks the plan for unrealistic workload, unclear tasks, and stressful tone.",
+      "inputs": [
+        {
+          "name": "draft_plan",
+          "description": "Generated study plan."
+        },
+        {
+          "name": "quiz_blocks",
+          "description": "Generated quiz items."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reviewed_plan",
+          "description": "Plan with overload or clarity warnings.",
+          "format": "reviewed_markdown"
+        }
+      ],
+      "config": {
+        "max_daily_hours": 4,
+        "flag_unclear_tasks": true
+      },
+      "risks": [
+        {
+          "risk_type": "missed_overload",
+          "severity": "warning",
+          "description": "The evaluator may miss stress or unrealistic effort.",
+          "mitigation": "Ask the student to approve or edit before finalizing."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "low",
+        "notes": "Can be heuristic or model-assisted."
+      },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Short review step.",
+        "estimated_seconds": 2
+      },
+      "alternatives": [
+        {
+          "name": "Student-only review",
+          "tradeoff": "More control but fewer automated warnings."
+        }
+      ],
+      "explanation_for_beginner": "This checks whether the plan is practical before the student sees it as final.",
+      "position": { "x": 1320, "y": 0 }
+    },
+    {
+      "id": "student_approval",
+      "type": "human_review",
+      "name": "Student Approval",
+      "description": "Lets the student edit or approve the plan before it becomes final.",
+      "inputs": [
+        {
+          "name": "reviewed_plan",
+          "description": "Plan with warnings and quiz blocks."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "approved_plan",
+          "description": "Student-approved study plan.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "approval_required": true,
+        "allow_edits": true
+      },
+      "risks": [
+        {
+          "risk_type": "approval_skip",
+          "severity": "warning",
+          "description": "A student may approve a plan that does not fit their real week.",
+          "mitigation": "Make edit and reject actions equally visible."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "No model cost." },
+      "latency_estimate": { "relative": "medium", "notes": "Depends on student review time." },
+      "alternatives": [
+        {
+          "name": "Auto-save draft",
+          "tradeoff": "Faster but weaker user control."
+        }
+      ],
+      "explanation_for_beginner": "The student remains in charge of the final schedule.",
+      "position": { "x": 1540, "y": 0 }
+    },
+    {
+      "id": "final_study_plan",
+      "type": "output",
+      "name": "Final Study Plan",
+      "description": "Shows the approved weekly plan, quiz blocks, and progress update instructions.",
+      "inputs": [
+        {
+          "name": "approved_plan",
+          "description": "Approved final plan."
+        }
+      ],
+      "outputs": [],
+      "config": {
+        "output_format": "weekly schedule, quiz list, weak-topic tracking prompt"
+      },
+      "risks": [
+        {
+          "risk_type": "overconfidence",
+          "severity": "warning",
+          "description": "The plan may look authoritative even when notes were incomplete.",
+          "mitigation": "Show assumptions and missing context warnings."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "Display only." },
+      "latency_estimate": { "relative": "none", "notes": "Immediate display." },
+      "alternatives": [
+        {
+          "name": "Calendar export",
+          "tradeoff": "Useful later but adds tool permission concerns."
+        }
+      ],
+      "explanation_for_beginner": "This is the student's approved plan, not an automatic command.",
+      "position": { "x": 1760, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_notes_privacy",
+      "source": "student_goal_input",
+      "target": "privacy_filter",
+      "kind": "control_flow",
+      "label": "study context requested"
+    },
+    {
+      "id": "edge_privacy_kb",
+      "source": "privacy_filter",
+      "target": "course_notes_kb",
+      "kind": "data_flow",
+      "label": "minimized notes"
+    },
+    {
+      "id": "edge_goal_retrieval",
+      "source": "student_goal_input",
+      "target": "retrieval",
+      "kind": "data_flow",
+      "label": "study goal"
+    },
+    {
+      "id": "edge_kb_retrieval",
+      "source": "course_notes_kb",
+      "target": "retrieval",
+      "kind": "data_flow",
+      "label": "course index"
+    },
+    {
+      "id": "edge_goal_prompt",
+      "source": "student_goal_input",
+      "target": "study_plan_prompt",
+      "kind": "data_flow",
+      "label": "constraints"
+    },
+    {
+      "id": "edge_retrieval_prompt",
+      "source": "retrieval",
+      "target": "study_plan_prompt",
+      "kind": "data_flow",
+      "label": "study context"
+    },
+    {
+      "id": "edge_prompt_llm",
+      "source": "study_plan_prompt",
+      "target": "study_coach_llm",
+      "kind": "data_flow",
+      "label": "planning prompt"
+    },
+    {
+      "id": "edge_llm_quiz",
+      "source": "study_coach_llm",
+      "target": "quiz_generator",
+      "kind": "data_flow",
+      "label": "draft plan"
+    },
+    {
+      "id": "edge_retrieval_quiz",
+      "source": "retrieval",
+      "target": "quiz_generator",
+      "kind": "data_flow",
+      "label": "course context"
+    },
+    {
+      "id": "edge_memory_prompt",
+      "source": "progress_memory",
+      "target": "study_plan_prompt",
+      "kind": "data_flow",
+      "label": "weak topics",
+      "condition": "student consented to progress memory"
+    },
+    {
+      "id": "edge_llm_eval",
+      "source": "study_coach_llm",
+      "target": "clarity_evaluator",
+      "kind": "review_flow",
+      "label": "draft plan"
+    },
+    {
+      "id": "edge_quiz_eval",
+      "source": "quiz_generator",
+      "target": "clarity_evaluator",
+      "kind": "review_flow",
+      "label": "quiz blocks"
+    },
+    {
+      "id": "edge_eval_approval",
+      "source": "clarity_evaluator",
+      "target": "student_approval",
+      "kind": "review_flow",
+      "label": "reviewed plan"
+    },
+    {
+      "id": "edge_approval_output",
+      "source": "student_approval",
+      "target": "final_study_plan",
+      "kind": "review_flow",
+      "label": "approved plan"
+    }
+  ]
+}

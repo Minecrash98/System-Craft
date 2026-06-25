@@ -1,0 +1,723 @@
+{
+  "id": "research-assistant",
+  "title": "Trustworthy Research Assistant With Verified Citations",
+  "description": "An improved RAG architecture that grounds answers in uploaded papers, verifies citations, and routes important outputs through review.",
+  "version": "1.0.0",
+  "user_idea": "Build a trustworthy research assistant that can read papers, answer questions, and provide verified citations.",
+  "assumptions": [
+    "Uploaded papers may contain private notes or unpublished work.",
+    "Answers must cite retrieved paper passages.",
+    "Human review is required before high-trust external use."
+  ],
+  "task_profile": {
+    "task_type": "research_assistant",
+    "risk_level": "high",
+    "knowledge_intensity": "high",
+    "requires_tools": false,
+    "requires_memory": false,
+    "requires_human_review": true,
+    "requires_citations": true,
+    "privacy_sensitivity": "high"
+  },
+  "naive_baseline": {
+    "summary": "User question goes directly to one LLM, which returns an answer without retrieval, source trace, citation checks, or review.",
+    "failure_modes": [
+      "Invented citations or unsupported claims can reach the user.",
+      "Private uploaded material has no retention or deletion policy.",
+      "There is no reviewer for important research outputs."
+    ]
+  },
+  "nodes": [
+    {
+      "id": "document_upload",
+      "type": "input",
+      "name": "Document Upload",
+      "description": "Collects papers or notes that the assistant is allowed to use.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "uploaded_documents",
+          "description": "User-provided papers and notes.",
+          "sensitive": true,
+          "format": "pdf_or_text"
+        }
+      ],
+      "config": {
+        "accepted_formats": ["pdf", "txt", "markdown"],
+        "max_files": 10
+      },
+      "risks": [
+        {
+          "risk_type": "private_upload",
+          "severity": "warning",
+          "description": "Uploaded papers may include private or unpublished information.",
+          "mitigation": "Show retention assumptions and avoid storing documents longer than needed."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "none",
+        "notes": "No model cost at upload time."
+      },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Upload latency depends on document size.",
+        "estimated_seconds": 2
+      },
+      "alternatives": [
+        {
+          "name": "Paste abstract only",
+          "tradeoff": "Lower privacy exposure but weaker grounding.",
+          "when_to_use": "Use when the full paper cannot be uploaded."
+        }
+      ],
+      "explanation_for_beginner": "This is the door where trusted source material enters the system.",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "text_extraction",
+      "type": "transform",
+      "name": "Text Extraction",
+      "description": "Converts uploaded files into plain text and metadata.",
+      "inputs": [
+        {
+          "name": "uploaded_documents",
+          "description": "Raw uploaded files.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "document_text",
+          "description": "Extracted text with page or section metadata.",
+          "sensitive": true,
+          "format": "structured_text"
+        }
+      ],
+      "config": {
+        "preserve_page_numbers": true,
+        "strip_binary_content": true
+      },
+      "risks": [
+        {
+          "risk_type": "extraction_error",
+          "severity": "warning",
+          "description": "Poor extraction can lose tables, formulas, or citation context.",
+          "mitigation": "Keep page metadata and expose extraction uncertainty."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "low",
+        "notes": "Usually a local parsing cost."
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Large PDFs may take several seconds.",
+        "estimated_seconds": 5
+      },
+      "alternatives": [
+        {
+          "name": "Manual text paste",
+          "tradeoff": "More effort for the user but fewer parsing errors."
+        }
+      ],
+      "explanation_for_beginner": "The system cannot search PDFs well until their words are extracted.",
+      "position": { "x": 220, "y": 0 }
+    },
+    {
+      "id": "chunking",
+      "type": "transform",
+      "name": "Chunking",
+      "description": "Splits long document text into smaller searchable sections.",
+      "inputs": [
+        {
+          "name": "document_text",
+          "description": "Extracted document text with metadata.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "document_chunks",
+          "description": "Searchable chunks with source metadata.",
+          "sensitive": true,
+          "format": "chunk_list"
+        }
+      ],
+      "config": {
+        "target_tokens": 700,
+        "overlap_tokens": 100
+      },
+      "risks": [
+        {
+          "risk_type": "lost_context",
+          "severity": "warning",
+          "description": "Chunks can split claims from their supporting evidence.",
+          "mitigation": "Use overlap and keep paper, page, and section metadata."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "low",
+        "notes": "Local text processing."
+      },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Fast for small document sets.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Section-aware chunking",
+          "tradeoff": "Better context but more implementation effort."
+        }
+      ],
+      "explanation_for_beginner": "Chunking turns large papers into bite-sized pieces that retrieval can find.",
+      "position": { "x": 440, "y": 0 }
+    },
+    {
+      "id": "embedding",
+      "type": "transform",
+      "name": "Embedding",
+      "description": "Creates vector representations for each chunk.",
+      "inputs": [
+        {
+          "name": "document_chunks",
+          "description": "Chunked document text.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "chunk_vectors",
+          "description": "Embeddings linked to chunk metadata.",
+          "sensitive": true,
+          "format": "vector_records"
+        }
+      ],
+      "config": {
+        "embedding_model": "text-embedding-small",
+        "batching": true
+      },
+      "risks": [
+        {
+          "risk_type": "model_cost",
+          "severity": "warning",
+          "description": "Embedding many documents can create repeated cost.",
+          "mitigation": "Cache embeddings and avoid recomputing unchanged documents."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "Embedding cost grows with document volume.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Batching reduces total wait time.",
+        "estimated_seconds": 6
+      },
+      "alternatives": [
+        {
+          "name": "Keyword index",
+          "tradeoff": "Cheaper and simpler, but misses semantic matches."
+        }
+      ],
+      "explanation_for_beginner": "Embeddings make similar ideas close together so the system can retrieve relevant passages.",
+      "position": { "x": 660, "y": 0 }
+    },
+    {
+      "id": "knowledge_base",
+      "type": "knowledge_base",
+      "name": "Knowledge Base",
+      "description": "Stores chunk text, vectors, source metadata, and retention settings.",
+      "inputs": [
+        {
+          "name": "chunk_vectors",
+          "description": "Embedded chunks and source metadata.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "searchable_corpus",
+          "description": "Indexed knowledge for retrieval.",
+          "sensitive": true,
+          "format": "vector_index"
+        }
+      ],
+      "config": {
+        "retention_policy": "delete on project reset or user request",
+        "source_metadata": ["paper_title", "page", "section"]
+      },
+      "risks": [
+        {
+          "risk_type": "retention",
+          "severity": "error",
+          "description": "Private uploads need clear storage and deletion expectations.",
+          "mitigation": "Expose retention policy and deletion control in the implementation plan."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "low",
+        "notes": "Storage cost is modest for a demo corpus."
+      },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Index lookup should be fast after ingestion.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Session-only index",
+          "tradeoff": "Better privacy but users must re-upload documents."
+        }
+      ],
+      "explanation_for_beginner": "The knowledge base is the assistant's approved library.",
+      "position": { "x": 880, "y": 0 }
+    },
+    {
+      "id": "user_question",
+      "type": "input",
+      "name": "User Question",
+      "description": "Receives the research question to answer.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "question",
+          "description": "The user's question about the uploaded papers.",
+          "format": "text"
+        }
+      ],
+      "config": {
+        "require_question_text": true
+      },
+      "risks": [
+        {
+          "risk_type": "ambiguous_question",
+          "severity": "warning",
+          "description": "Ambiguous questions can produce broad or unsupported answers.",
+          "mitigation": "Ask for clarification when the retrieval query is too vague."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "none",
+        "notes": "No model cost at input time."
+      },
+      "latency_estimate": {
+        "relative": "none",
+        "notes": "Immediate user input."
+      },
+      "alternatives": [
+        {
+          "name": "Guided question form",
+          "tradeoff": "More structure but less flexible input."
+        }
+      ],
+      "explanation_for_beginner": "This captures what the user wants to learn from the papers.",
+      "position": { "x": 440, "y": 220 }
+    },
+    {
+      "id": "retrieval",
+      "type": "retrieval",
+      "name": "Retrieval",
+      "description": "Finds the most relevant document chunks for the question.",
+      "inputs": [
+        {
+          "name": "question",
+          "description": "The user's research question."
+        },
+        {
+          "name": "searchable_corpus",
+          "description": "Indexed document chunks.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "retrieved_context",
+          "description": "Ranked passages with source metadata.",
+          "sensitive": true,
+          "format": "passage_list"
+        }
+      ],
+      "config": {
+        "top_k": 6,
+        "minimum_score": 0.72,
+        "fallback_when_empty": "ask for more documents or answer with uncertainty"
+      },
+      "risks": [
+        {
+          "risk_type": "missed_evidence",
+          "severity": "error",
+          "description": "Retrieval may miss a key passage and make the answer incomplete.",
+          "mitigation": "Show retrieved sources and allow uncertainty when evidence is weak."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "low",
+        "notes": "Vector lookup is cheaper than generation."
+      },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Expected to run quickly after indexing.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Hybrid search",
+          "tradeoff": "Better recall but more indexing complexity."
+        }
+      ],
+      "explanation_for_beginner": "Retrieval chooses which parts of the papers the LLM should see before answering.",
+      "position": { "x": 660, "y": 220 }
+    },
+    {
+      "id": "grounded_prompt",
+      "type": "prompt",
+      "name": "Grounded Prompt",
+      "description": "Builds instructions that require answers to use retrieved sources and state uncertainty.",
+      "inputs": [
+        {
+          "name": "question",
+          "description": "The user's question."
+        },
+        {
+          "name": "retrieved_context",
+          "description": "Source passages selected for grounding.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "answer_prompt",
+          "description": "Instruction bundle for the answer model.",
+          "format": "prompt"
+        }
+      ],
+      "config": {
+        "requires_citations": true,
+        "uncertainty_behavior": "say when evidence is missing",
+        "output_format": "answer with citation list"
+      },
+      "risks": [
+        {
+          "risk_type": "prompt_gap",
+          "severity": "warning",
+          "description": "Weak instructions may allow unsupported claims.",
+          "mitigation": "Explicitly require citations and uncertainty statements."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "none",
+        "notes": "Prompt assembly itself has no model cost."
+      },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Prompt assembly is local."
+      },
+      "alternatives": [
+        {
+          "name": "Few-shot grounded prompt",
+          "tradeoff": "Better behavior but more tokens."
+        }
+      ],
+      "explanation_for_beginner": "The prompt tells the LLM the rules for using evidence.",
+      "position": { "x": 880, "y": 220 }
+    },
+    {
+      "id": "answer_generator",
+      "type": "llm",
+      "name": "LLM Answer Generator",
+      "description": "Drafts an answer using only the retrieved context and prompt instructions.",
+      "inputs": [
+        {
+          "name": "answer_prompt",
+          "description": "Grounded prompt with retrieved passages."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "draft_answer",
+          "description": "Cited draft answer for verification.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "model_role": "factual_answer_writer",
+        "temperature": 0.2,
+        "must_quote_sources": true
+      },
+      "risks": [
+        {
+          "risk_type": "hallucination",
+          "severity": "critical",
+          "description": "The model can still invent claims or citations.",
+          "mitigation": "Send every draft to citation verification before final output."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "Generation cost depends on context and answer length.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Answer generation usually dominates user wait time.",
+        "estimated_seconds": 8
+      },
+      "alternatives": [
+        {
+          "name": "Smaller factual model",
+          "tradeoff": "Lower cost but weaker reasoning."
+        }
+      ],
+      "explanation_for_beginner": "This is the writing step, but it is boxed in by retrieved evidence.",
+      "position": { "x": 1100, "y": 220 }
+    },
+    {
+      "id": "citation_verifier",
+      "type": "evaluator",
+      "name": "Citation Verifier",
+      "description": "Checks that each cited claim is supported by retrieved passages.",
+      "inputs": [
+        {
+          "name": "draft_answer",
+          "description": "Draft answer with citations."
+        },
+        {
+          "name": "retrieved_context",
+          "description": "Source passages used for verification.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "verified_draft",
+          "description": "Draft with verification notes and unsupported claims marked.",
+          "format": "verification_report"
+        }
+      ],
+      "config": {
+        "check_claim_alignment": true,
+        "block_unsupported_claims": true
+      },
+      "risks": [
+        {
+          "risk_type": "false_negative",
+          "severity": "error",
+          "description": "The verifier may miss subtle citation problems.",
+          "mitigation": "Route important outputs to human review and show verification notes."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "Verification may use another model call.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Adds latency but catches high-value failures.",
+        "estimated_seconds": 5
+      },
+      "alternatives": [
+        {
+          "name": "Rule-based citation presence check",
+          "tradeoff": "Cheaper but cannot prove claim support."
+        }
+      ],
+      "explanation_for_beginner": "The verifier is a second checkpoint that asks whether the answer really matches the sources.",
+      "position": { "x": 1320, "y": 220 }
+    },
+    {
+      "id": "human_review",
+      "type": "human_review",
+      "name": "Human Review",
+      "description": "Lets a user review verification notes before trusting the answer.",
+      "inputs": [
+        {
+          "name": "verified_draft",
+          "description": "Verified answer draft with any warnings."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "approved_answer",
+          "description": "Reviewed answer ready for final display.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "review_required_for": ["unsupported_claim", "high_confidence_external_use"]
+      },
+      "risks": [
+        {
+          "risk_type": "review_fatigue",
+          "severity": "warning",
+          "description": "Reviewers may approve too quickly when there are many warnings.",
+          "mitigation": "Highlight only the highest-impact verification failures."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "none",
+        "notes": "Human time cost, not model cost."
+      },
+      "latency_estimate": {
+        "relative": "high",
+        "notes": "Human review adds variable waiting time."
+      },
+      "alternatives": [
+        {
+          "name": "User approval only for flagged drafts",
+          "tradeoff": "Faster routine answers but less oversight."
+        }
+      ],
+      "explanation_for_beginner": "A person gets the final say when the answer may be important.",
+      "position": { "x": 1540, "y": 220 }
+    },
+    {
+      "id": "final_answer",
+      "type": "output",
+      "name": "Final Answer",
+      "description": "Displays the reviewed answer, citations, uncertainty notes, and source list.",
+      "inputs": [
+        {
+          "name": "approved_answer",
+          "description": "Reviewed answer from human review."
+        }
+      ],
+      "outputs": [],
+      "config": {
+        "output_format": "answer, citations, uncertainty notes, source list"
+      },
+      "risks": [
+        {
+          "risk_type": "overtrust",
+          "severity": "warning",
+          "description": "Users may treat a polished answer as guaranteed correct.",
+          "mitigation": "Show verification status and a clear uncertainty note."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "none",
+        "notes": "Display step has no model cost."
+      },
+      "latency_estimate": {
+        "relative": "none",
+        "notes": "Immediate display after review."
+      },
+      "alternatives": [
+        {
+          "name": "Annotated answer",
+          "tradeoff": "More transparent but longer to read."
+        }
+      ],
+      "explanation_for_beginner": "This is what the user sees after the safeguards have run.",
+      "position": { "x": 1760, "y": 220 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_upload_extract",
+      "source": "document_upload",
+      "target": "text_extraction",
+      "kind": "data_flow",
+      "label": "uploaded files",
+      "data_contract": "pdf_or_text"
+    },
+    {
+      "id": "edge_extract_chunk",
+      "source": "text_extraction",
+      "target": "chunking",
+      "kind": "data_flow",
+      "label": "extracted text",
+      "data_contract": "structured_text"
+    },
+    {
+      "id": "edge_chunk_embed",
+      "source": "chunking",
+      "target": "embedding",
+      "kind": "data_flow",
+      "label": "chunks",
+      "data_contract": "chunk_list"
+    },
+    {
+      "id": "edge_embed_kb",
+      "source": "embedding",
+      "target": "knowledge_base",
+      "kind": "data_flow",
+      "label": "vectors and metadata",
+      "data_contract": "vector_records"
+    },
+    {
+      "id": "edge_kb_retrieval",
+      "source": "knowledge_base",
+      "target": "retrieval",
+      "kind": "data_flow",
+      "label": "searchable corpus",
+      "data_contract": "vector_index"
+    },
+    {
+      "id": "edge_question_retrieval",
+      "source": "user_question",
+      "target": "retrieval",
+      "kind": "data_flow",
+      "label": "question",
+      "data_contract": "text"
+    },
+    {
+      "id": "edge_question_prompt",
+      "source": "user_question",
+      "target": "grounded_prompt",
+      "kind": "data_flow",
+      "label": "question text",
+      "data_contract": "text"
+    },
+    {
+      "id": "edge_retrieval_prompt",
+      "source": "retrieval",
+      "target": "grounded_prompt",
+      "kind": "data_flow",
+      "label": "retrieved context",
+      "data_contract": "passage_list"
+    },
+    {
+      "id": "edge_prompt_llm",
+      "source": "grounded_prompt",
+      "target": "answer_generator",
+      "kind": "data_flow",
+      "label": "answer prompt",
+      "data_contract": "prompt"
+    },
+    {
+      "id": "edge_llm_verifier",
+      "source": "answer_generator",
+      "target": "citation_verifier",
+      "kind": "review_flow",
+      "label": "draft answer",
+      "data_contract": "markdown"
+    },
+    {
+      "id": "edge_retrieval_verifier",
+      "source": "retrieval",
+      "target": "citation_verifier",
+      "kind": "data_flow",
+      "label": "source passages",
+      "data_contract": "passage_list"
+    },
+    {
+      "id": "edge_verifier_review",
+      "source": "citation_verifier",
+      "target": "human_review",
+      "kind": "review_flow",
+      "label": "verification report",
+      "data_contract": "verification_report"
+    },
+    {
+      "id": "edge_review_output",
+      "source": "human_review",
+      "target": "final_answer",
+      "kind": "review_flow",
+      "label": "approved answer",
+      "data_contract": "markdown"
+    }
+  ]
+}

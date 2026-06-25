@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+
+.env
+.env*.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+*.tsbuildinfo
+*.zip
+Final_instruction.txt
+docs/source-briefs/final-instruction.txt

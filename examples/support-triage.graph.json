@@ -1,0 +1,582 @@
+{
+  "id": "support-triage",
+  "title": "Customer Support Triage Bot For A Small SaaS Startup",
+  "description": "A guarded support architecture that redacts PII, retrieves approved policy, checks compliance, and escalates sensitive cases.",
+  "version": "1.0.0",
+  "user_idea": "Build a customer support bot for my startup that answers FAQs, checks policy, and escalates billing or angry customer messages.",
+  "assumptions": [
+    "Customer messages may contain personal or billing information.",
+    "The bot should draft responses but avoid account changes.",
+    "Billing, legal, security, and angry customer cases require escalation."
+  ],
+  "task_profile": {
+    "task_type": "support_triage",
+    "risk_level": "high",
+    "knowledge_intensity": "high",
+    "requires_tools": true,
+    "requires_memory": false,
+    "requires_human_review": true,
+    "requires_citations": false,
+    "privacy_sensitivity": "high"
+  },
+  "naive_baseline": {
+    "summary": "Customer messages go straight to an LLM, which answers without redaction, approved policy retrieval, permission gating, or escalation.",
+    "failure_modes": [
+      "The response may contradict refund or billing policy.",
+      "Sensitive customer data can be exposed in prompts or outputs.",
+      "The bot may attempt an account action without permission."
+    ]
+  },
+  "nodes": [
+    {
+      "id": "customer_message",
+      "type": "input",
+      "name": "Customer Message",
+      "description": "Receives the customer support request.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "raw_message",
+          "description": "Customer text, possibly containing PII.",
+          "sensitive": true,
+          "format": "text"
+        }
+      ],
+      "config": {
+        "channels": ["chat", "email"]
+      },
+      "risks": [
+        {
+          "risk_type": "sensitive_input",
+          "severity": "warning",
+          "description": "Customer messages can include personal or billing details.",
+          "mitigation": "Redact PII before routing to other components."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "No model cost." },
+      "latency_estimate": { "relative": "none", "notes": "Immediate input." },
+      "alternatives": [
+        {
+          "name": "Structured ticket form",
+          "tradeoff": "Cleaner data but more friction for customers."
+        }
+      ],
+      "explanation_for_beginner": "This is where the customer's request enters the support system.",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "pii_redaction",
+      "type": "privacy_filter",
+      "name": "PII Redaction",
+      "description": "Removes or masks personal data before classification and response drafting.",
+      "inputs": [
+        {
+          "name": "raw_message",
+          "description": "Original customer message.",
+          "sensitive": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "redacted_message",
+          "description": "Message with personal data minimized.",
+          "sensitive": true,
+          "format": "text"
+        }
+      ],
+      "config": {
+        "mask_email": true,
+        "mask_payment_tokens": true,
+        "retain_ticket_id": true
+      },
+      "risks": [
+        {
+          "risk_type": "missed_pii",
+          "severity": "error",
+          "description": "PII redaction may miss unusual personal data.",
+          "mitigation": "Combine redaction with reviewer escalation for sensitive topics."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Can use rules or a small classifier." },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Should be fast enough for chat.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Manual redaction",
+          "tradeoff": "Higher accuracy for rare cases but slower."
+        }
+      ],
+      "explanation_for_beginner": "Redaction reduces the chance that private customer data spreads through the system.",
+      "position": { "x": 220, "y": 0 }
+    },
+    {
+      "id": "intent_classifier",
+      "type": "classifier",
+      "name": "Intent Classifier",
+      "description": "Classifies the message as FAQ, billing, angry customer, bug report, security, or legal.",
+      "inputs": [
+        {
+          "name": "redacted_message",
+          "description": "Privacy-filtered customer message."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "intent",
+          "description": "Routing label and confidence.",
+          "format": "classification"
+        }
+      ],
+      "config": {
+        "escalate_intents": ["billing", "legal", "security", "angry_customer"],
+        "minimum_confidence": 0.75
+      },
+      "risks": [
+        {
+          "risk_type": "misroute",
+          "severity": "error",
+          "description": "Misclassified billing or legal cases could get an unsafe response.",
+          "mitigation": "Escalate low-confidence or sensitive intents."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Classifier cost is low." },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Short classification step.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Rule-first routing",
+          "tradeoff": "Predictable for obvious cases but brittle."
+        }
+      ],
+      "explanation_for_beginner": "The classifier decides whether the bot can help or should involve a person.",
+      "position": { "x": 440, "y": 0 }
+    },
+    {
+      "id": "policy_kb",
+      "type": "knowledge_base",
+      "name": "FAQ And Policy Knowledge Base",
+      "description": "Stores approved FAQ, refund, billing, and support policy content.",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "approved_policy",
+          "description": "Searchable support policy and FAQ entries.",
+          "format": "policy_index"
+        }
+      ],
+      "config": {
+        "source_owner": "support_ops",
+        "review_cadence": "weekly"
+      },
+      "risks": [
+        {
+          "risk_type": "stale_policy",
+          "severity": "error",
+          "description": "Outdated policy can cause wrong customer commitments.",
+          "mitigation": "Show policy version and review cadence in exported plan."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Policy storage is cheap." },
+      "latency_estimate": { "relative": "low", "notes": "Policy lookup is fast." },
+      "alternatives": [
+        {
+          "name": "Static FAQ only",
+          "tradeoff": "Simpler but misses nuanced policy cases."
+        }
+      ],
+      "explanation_for_beginner": "This is the approved source of truth for customer answers.",
+      "position": { "x": 440, "y": 220 }
+    },
+    {
+      "id": "retrieval",
+      "type": "retrieval",
+      "name": "Retrieval",
+      "description": "Finds relevant FAQ or policy passages for the customer message.",
+      "inputs": [
+        {
+          "name": "redacted_message",
+          "description": "Privacy-filtered customer message."
+        },
+        {
+          "name": "approved_policy",
+          "description": "Approved support knowledge."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "policy_context",
+          "description": "Relevant policy passages with source labels.",
+          "format": "policy_context"
+        }
+      ],
+      "config": {
+        "top_k": 4,
+        "fallback_when_empty": "escalate or say policy could not be found"
+      },
+      "risks": [
+        {
+          "risk_type": "missing_policy",
+          "severity": "error",
+          "description": "If policy is not found, the bot may guess.",
+          "mitigation": "Fallback to escalation when retrieval confidence is low."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Retrieval is cheaper than generation." },
+      "latency_estimate": {
+        "relative": "low",
+        "notes": "Expected quick lookup.",
+        "estimated_seconds": 1
+      },
+      "alternatives": [
+        {
+          "name": "Direct policy lookup by intent",
+          "tradeoff": "Simpler for common intents but less flexible."
+        }
+      ],
+      "explanation_for_beginner": "Retrieval gives the model the approved policy text before it drafts anything.",
+      "position": { "x": 660, "y": 120 }
+    },
+    {
+      "id": "response_draft_llm",
+      "type": "llm",
+      "name": "Response Draft LLM",
+      "description": "Drafts a customer response from the redacted message and retrieved policy.",
+      "inputs": [
+        {
+          "name": "redacted_message",
+          "description": "Privacy-filtered message."
+        },
+        {
+          "name": "policy_context",
+          "description": "Approved policy passages."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "draft_response",
+          "description": "Draft support reply.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "tone": "calm and concise",
+        "temperature": 0.2,
+        "must_use_policy_context": true
+      },
+      "risks": [
+        {
+          "risk_type": "wrong_policy_commitment",
+          "severity": "critical",
+          "description": "The model may promise refunds or actions that policy does not allow.",
+          "mitigation": "Check draft with policy compliance evaluator before final response."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "One generation call per draft.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Generation adds response time.",
+        "estimated_seconds": 5
+      },
+      "alternatives": [
+        {
+          "name": "Template response",
+          "tradeoff": "Lower risk but less adaptive."
+        }
+      ],
+      "explanation_for_beginner": "The LLM writes a draft, but only after receiving the approved policy context.",
+      "position": { "x": 880, "y": 120 }
+    },
+    {
+      "id": "policy_evaluator",
+      "type": "evaluator",
+      "name": "Policy Compliance Evaluator",
+      "description": "Checks whether the draft response follows approved policy and avoids unsafe commitments.",
+      "inputs": [
+        {
+          "name": "draft_response",
+          "description": "Draft support reply."
+        },
+        {
+          "name": "policy_context",
+          "description": "Approved policy passages."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reviewed_response",
+          "description": "Draft response with compliance notes.",
+          "format": "reviewed_markdown"
+        }
+      ],
+      "config": {
+        "block_policy_conflicts": true,
+        "require_source_policy": true
+      },
+      "risks": [
+        {
+          "risk_type": "missed_policy_conflict",
+          "severity": "error",
+          "description": "The evaluator may fail to catch every policy issue.",
+          "mitigation": "Escalate sensitive intents and low-confidence reviews."
+        }
+      ],
+      "cost_estimate": {
+        "relative": "medium",
+        "notes": "May require a second model call.",
+        "units_per_run": 1
+      },
+      "latency_estimate": {
+        "relative": "medium",
+        "notes": "Adds quality-control time.",
+        "estimated_seconds": 4
+      },
+      "alternatives": [
+        {
+          "name": "Rule-only compliance check",
+          "tradeoff": "Cheaper but misses nuanced language."
+        }
+      ],
+      "explanation_for_beginner": "This checkpoint asks whether the draft is allowed by the company's policy.",
+      "position": { "x": 1100, "y": 120 }
+    },
+    {
+      "id": "tool_permission_gate",
+      "type": "tool",
+      "name": "Tool Permission Gate",
+      "description": "Prevents account changes and sensitive actions unless a human explicitly approves them.",
+      "inputs": [
+        {
+          "name": "intent",
+          "description": "Detected support intent."
+        },
+        {
+          "name": "reviewed_response",
+          "description": "Policy-reviewed response."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "allowed_action",
+          "description": "Safe action decision or escalation request.",
+          "format": "action_decision"
+        }
+      ],
+      "config": {
+        "irreversible_actions_allowed": false,
+        "requires_human_for": ["refund", "billing_change", "account_change"]
+      },
+      "risks": [
+        {
+          "risk_type": "unauthorized_action",
+          "severity": "critical",
+          "description": "Support tools can affect customer accounts or billing.",
+          "mitigation": "Keep this gate human-approved for sensitive actions."
+        }
+      ],
+      "cost_estimate": { "relative": "low", "notes": "Mostly rules and permissions." },
+      "latency_estimate": { "relative": "low", "notes": "Fast decision unless escalated." },
+      "alternatives": [
+        {
+          "name": "No tool access",
+          "tradeoff": "Safer for MVP but less useful for support operations."
+        }
+      ],
+      "explanation_for_beginner": "This gate stops the bot from taking actions it should not take on its own.",
+      "position": { "x": 1320, "y": 120 }
+    },
+    {
+      "id": "human_escalation",
+      "type": "human_review",
+      "name": "Human Escalation",
+      "description": "Routes sensitive, angry, legal, security, billing, or low-confidence cases to a person.",
+      "inputs": [
+        {
+          "name": "intent",
+          "description": "Routing label."
+        },
+        {
+          "name": "allowed_action",
+          "description": "Safe action decision."
+        },
+        {
+          "name": "reviewed_response",
+          "description": "Policy-reviewed response."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "approved_response",
+          "description": "Response approved or rewritten by support staff.",
+          "format": "markdown"
+        }
+      ],
+      "config": {
+        "escalate_low_confidence": true,
+        "escalate_sensitive_intents": true
+      },
+      "risks": [
+        {
+          "risk_type": "slow_escalation",
+          "severity": "warning",
+          "description": "Human review can slow responses.",
+          "mitigation": "Use clear triage labels and draft context to speed review."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "Human time cost, not model cost." },
+      "latency_estimate": { "relative": "high", "notes": "Depends on support queue." },
+      "alternatives": [
+        {
+          "name": "Escalate only critical intents",
+          "tradeoff": "Faster but higher policy risk."
+        }
+      ],
+      "explanation_for_beginner": "A human handles cases where the bot should not be the final decision maker.",
+      "position": { "x": 1540, "y": 120 }
+    },
+    {
+      "id": "final_response",
+      "type": "output",
+      "name": "Final Response",
+      "description": "Sends or displays the approved support response with escalation status.",
+      "inputs": [
+        {
+          "name": "approved_response",
+          "description": "Approved final support response."
+        }
+      ],
+      "outputs": [],
+      "config": {
+        "output_format": "customer reply with escalation status"
+      },
+      "risks": [
+        {
+          "risk_type": "customer_confusion",
+          "severity": "warning",
+          "description": "Customers may not know when a case is escalated.",
+          "mitigation": "State clearly when a human will follow up."
+        }
+      ],
+      "cost_estimate": { "relative": "none", "notes": "Display or send step only." },
+      "latency_estimate": { "relative": "none", "notes": "Immediate after approval." },
+      "alternatives": [
+        {
+          "name": "Internal draft only",
+          "tradeoff": "Safer for early MVP but less automated."
+        }
+      ],
+      "explanation_for_beginner": "This is the safe response that reaches the customer after checks and escalation.",
+      "position": { "x": 1760, "y": 120 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_message_redaction",
+      "source": "customer_message",
+      "target": "pii_redaction",
+      "kind": "data_flow",
+      "label": "raw message"
+    },
+    {
+      "id": "edge_redaction_classifier",
+      "source": "pii_redaction",
+      "target": "intent_classifier",
+      "kind": "data_flow",
+      "label": "redacted message"
+    },
+    {
+      "id": "edge_redaction_retrieval",
+      "source": "pii_redaction",
+      "target": "retrieval",
+      "kind": "data_flow",
+      "label": "redacted message"
+    },
+    {
+      "id": "edge_policy_retrieval",
+      "source": "policy_kb",
+      "target": "retrieval",
+      "kind": "data_flow",
+      "label": "approved policy"
+    },
+    {
+      "id": "edge_redaction_llm",
+      "source": "pii_redaction",
+      "target": "response_draft_llm",
+      "kind": "data_flow",
+      "label": "redacted message"
+    },
+    {
+      "id": "edge_retrieval_llm",
+      "source": "retrieval",
+      "target": "response_draft_llm",
+      "kind": "data_flow",
+      "label": "policy context"
+    },
+    {
+      "id": "edge_llm_evaluator",
+      "source": "response_draft_llm",
+      "target": "policy_evaluator",
+      "kind": "review_flow",
+      "label": "draft response"
+    },
+    {
+      "id": "edge_retrieval_evaluator",
+      "source": "retrieval",
+      "target": "policy_evaluator",
+      "kind": "data_flow",
+      "label": "policy context"
+    },
+    {
+      "id": "edge_intent_gate",
+      "source": "intent_classifier",
+      "target": "tool_permission_gate",
+      "kind": "control_flow",
+      "label": "intent and confidence"
+    },
+    {
+      "id": "edge_evaluator_gate",
+      "source": "policy_evaluator",
+      "target": "tool_permission_gate",
+      "kind": "review_flow",
+      "label": "reviewed response"
+    },
+    {
+      "id": "edge_intent_escalation",
+      "source": "intent_classifier",
+      "target": "human_escalation",
+      "kind": "control_flow",
+      "label": "sensitive or low-confidence intent",
+      "condition": "billing, legal, security, angry customer, or low confidence"
+    },
+    {
+      "id": "edge_gate_escalation",
+      "source": "tool_permission_gate",
+      "target": "human_escalation",
+      "kind": "review_flow",
+      "label": "action decision"
+    },
+    {
+      "id": "edge_evaluator_escalation",
+      "source": "policy_evaluator",
+      "target": "human_escalation",
+      "kind": "review_flow",
+      "label": "reviewed response"
+    },
+    {
+      "id": "edge_escalation_output",
+      "source": "human_escalation",
+      "target": "final_response",
+      "kind": "review_flow",
+      "label": "approved response"
+    }
+  ]
+}
